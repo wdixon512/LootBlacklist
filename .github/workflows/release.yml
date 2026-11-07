@@ -1,0 +1,172 @@
+# Push to main: pick the version from git tags and, when a shipped file changed,
+# build the addon zip and publish it to GitHub Releases and CurseForge.
+# Nobody edits a version number. The TOC keeps ## Version: @project-version@.
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "auto releases only when shipped files changed. patch/minor/major force a release at that level."
+        type: choice
+        options: [auto, patch, minor, major]
+        default: auto
+
+permissions:
+  contents: write
+
+concurrency:
+  group: lootblacklist-release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    env:
+      SHIPPED: "LootBlacklist.toc LootBlacklist.lua Bindings.xml"
+      CF_TOKEN: ${{ secrets.CURSEFORGE_API_TOKEN }}
+      CF_PROJECT: ${{ secrets.CURSEFORGE_PROJECT_ID }}
+      CF_VERSIONS: ${{ secrets.CURSEFORGE_GAME_VERSIONS }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Newest vMAJOR.MINOR.PATCH tag + 1 patch. A line starting with [minor] or
+      # [major] (or a "Release: minor" line) in a commit or PR title since that tag
+      # bumps more. The first release is v1.0.0.
+      - name: Choose the next version
+        id: plan
+        env:
+          BUMP: ${{ inputs.bump || 'auto' }}
+        run: |
+          set -euo pipefail
+          prev=$(git tag --list 'v*' | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n1 || true)
+          if [ -z "$prev" ]; then
+            next=v1.0.0
+            release=true
+            echo "No release tag yet; first release is $next."
+          else
+            # shellcheck disable=SC2086
+            changed=$(git diff --name-only "$prev" HEAD -- $SHIPPED)
+            msgs=$(git log --format=%B "$prev..HEAD")
+            level=patch
+            if grep -qiE '^\s*(\[minor\]|release:\s*minor)' <<<"$msgs"; then level=minor; fi
+            if grep -qiE '^\s*(\[major\]|release:\s*major)' <<<"$msgs"; then level=major; fi
+            if [ "$BUMP" != auto ]; then level=$BUMP; release=true
+            elif [ -n "$changed" ]; then release=true
+            else release=false; fi
+            IFS=. read -r major minor patch <<<"${prev#v}"
+            case "$level" in
+              major) next="v$((major + 1)).0.0" ;;
+              minor) next="v$major.$((minor + 1)).0" ;;
+              *)     next="v$major.$minor.$((patch + 1))" ;;
+            esac
+            echo "previous=$prev next=$next release=$release level=$level"
+            echo "changed: ${changed:-(none)}"
+          fi
+          if git rev-parse -q --verify "refs/tags/$next" >/dev/null; then
+            echo "::error::$next already exists; refusing to reuse it."
+            exit 1
+          fi
+          {
+            echo "release=$release"
+            echo "tag=$next"
+            echo "previous=$prev"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build the addon zip
+        if: steps.plan.outputs.release == 'true'
+        env:
+          TAG: ${{ steps.plan.outputs.tag }}
+        run: |
+          set -euo pipefail
+          mkdir -p dist/LootBlacklist
+          # shellcheck disable=SC2086
+          cp $SHIPPED dist/LootBlacklist/
+          sed -i "s/^## Version:.*/## Version: ${TAG#v}/" dist/LootBlacklist/LootBlacklist.toc
+          if grep -q '@project-version@' dist/LootBlacklist/LootBlacklist.toc; then
+            echo "::error::The packaged TOC still says @project-version@."
+            exit 1
+          fi
+          (cd dist && zip -r "../LootBlacklist-$TAG.zip" LootBlacklist)
+          unzip -l "LootBlacklist-$TAG.zip"
+
+      # Notes are the commit subjects and PR titles on main since the last tag.
+      - name: Write release notes
+        if: steps.plan.outputs.release == 'true'
+        env:
+          TAG: ${{ steps.plan.outputs.tag }}
+          PREV: ${{ steps.plan.outputs.previous }}
+        run: |
+          python3 <<'PY'
+          import os
+          import re
+          import subprocess
+
+          tag, prev = os.environ["TAG"], os.environ["PREV"]
+          args = ["git", "log", "--first-parent", "--format=%P%x1f%s%x1f%b%x1e"]
+          if prev:
+              args.append(f"{prev}..HEAD")
+          lines = []
+          for entry in subprocess.check_output(args, text=True).split("\x1e"):
+              if not entry.strip():
+                  continue
+              parents, subject, body = entry.strip("\n").split("\x1f", 2)
+              # A merged PR: its title is the first line of the merge commit body.
+              if len(parents.split()) > 1 and body.strip():
+                  subject = body.strip().splitlines()[0]
+              subject = re.sub(r"^\s*\[(minor|major|patch)\]\s*", "", subject, flags=re.I).strip()
+              if subject and not subject.lower().startswith("merge "):
+                  lines.append(f"- {subject}")
+          notes = f"## {tag}\n\n" + ("\n".join(lines) if lines else "- Fixes and improvements.") + "\n"
+          open("release-notes.md", "w", encoding="utf-8").write(notes)
+          print(notes)
+          PY
+
+      # Creating the GitHub release is what creates the tag.
+      - name: Create the GitHub release and tag
+        if: steps.plan.outputs.release == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.plan.outputs.tag }}
+        run: |
+          gh release create "$TAG" "LootBlacklist-$TAG.zip" \
+            --target "$GITHUB_SHA" \
+            --title "Loot Blacklist $TAG" \
+            --notes-file release-notes.md
+
+      - name: Upload to CurseForge
+        if: steps.plan.outputs.release == 'true' && env.CF_TOKEN != '' && env.CF_PROJECT != '' && env.CF_VERSIONS != ''
+        env:
+          TAG: ${{ steps.plan.outputs.tag }}
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          import json
+          import os
+
+          ids = [int(p.strip()) for p in os.environ["CF_VERSIONS"].split(",") if p.strip()]
+          if not ids:
+              raise SystemExit("CURSEFORGE_GAME_VERSIONS is empty")
+          metadata = {
+              "changelog": open("release-notes.md", encoding="utf-8").read().strip(),
+              "changelogType": "markdown",
+              "displayName": os.environ["TAG"],
+              "gameVersions": ids,
+              "releaseType": "release",
+          }
+          open("curseforge-metadata.json", "w", encoding="utf-8").write(json.dumps(metadata))
+          PY
+          curl --fail-with-body \
+            --header "X-Api-Token: ${CF_TOKEN}" \
+            --form "metadata=<curseforge-metadata.json;type=application/json" \
+            --form "file=@LootBlacklist-$TAG.zip" \
+            "https://wow.curseforge.com/api/projects/${CF_PROJECT}/upload-file"
+
+      - name: Note a skipped CurseForge upload
+        if: steps.plan.outputs.release == 'true' && (env.CF_TOKEN == '' || env.CF_PROJECT == '' || env.CF_VERSIONS == '')
+        run: echo "::warning::CurseForge upload skipped. Set CURSEFORGE_API_TOKEN, CURSEFORGE_PROJECT_ID, and CURSEFORGE_GAME_VERSIONS."
