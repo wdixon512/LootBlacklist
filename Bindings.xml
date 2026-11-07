@@ -1,0 +1,11 @@
+<Bindings>
+  <!-- Registering the click makes bag and loot buttons treat Ctrl+Shift+right-click
+       as a modified click, so the game does not use or loot the item. -->
+  <ModifiedClick action="LOOTBLACKLIST" default="CTRL-SHIFT-BUTTON2"/>
+  <Binding name="LOOTBLACKLIST_TOGGLE_HOVER" category="Loot Blacklist" header="LOOTBLACKLIST">
+    LootBlacklist_ToggleHovered()
+  </Binding>
+  <Binding name="LOOTBLACKLIST_OPEN" category="Loot Blacklist">
+    LootBlacklist_OnAddonCompartmentClick()
+  </Binding>
+</Bindings>

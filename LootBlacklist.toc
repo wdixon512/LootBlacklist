@@ -1,0 +1,11 @@
+## Interface: 16001, 16000, 16010
+## Title: Loot Blacklist
+## IconTexture: Interface\Icons\INV_Misc_Bag_10
+## Notes: Never pick up the items you blacklist. Ctrl+Shift+right-click an item to add or remove it. /lbl opens the list.
+## Author: wdixon512
+## SavedVariablesPerCharacter: LootBlacklistCharDB
+## Category: Inventory
+## DefaultState: enabled
+## AddonCompartmentFunc: LootBlacklist_OnAddonCompartmentClick
+
+LootBlacklist.lua
