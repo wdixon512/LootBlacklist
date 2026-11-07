@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Lua syntax (WoW runs Lua 5.1)
+        if: ${{ !cancelled() }}
+        run: |
+          sudo apt-get install -y -qq lua5.1 >/dev/null
+          for f in *.lua; do luac5.1 -p "$f" && echo "ok $f"; done
+
+      - name: Bindings.xml is well-formed
+        if: ${{ !cancelled() }}
+        run: python3 -c "import xml.dom.minidom as m; m.parse('Bindings.xml'); print('ok Bindings.xml')"
+
+      - name: Nobody typed a version number
+        if: ${{ !cancelled() }}
+        run: |
+          if ! grep -qx '## Version: @project-version@' LootBlacklist.toc; then
+            echo "::error file=LootBlacklist.toc::Keep '## Version: @project-version@'. The Release workflow picks the version from git tags."
+            exit 1
+          fi
+          echo "ok version placeholder"
+
+      - name: Every TOC file ships
+        if: ${{ !cancelled() }}
+        run: |
+          set -euo pipefail
+          for f in $(grep -vE '^\s*(#|$)' LootBlacklist.toc | tr -d '\r'); do
+            grep -q "\"$f\"" Install.ps1 || { echo "::error::$f is in the TOC but not in Install.ps1"; exit 1; }
+            grep -q "$f" .github/workflows/release.yml || { echo "::error::$f is in the TOC but not in SHIPPED in release.yml"; exit 1; }
+          done
+          echo "ok shipped files"

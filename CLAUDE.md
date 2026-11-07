@@ -16,7 +16,16 @@ Install into a WoW client (copies the `.toc`, `.lua`, and `Bindings.xml`):
 
 `-Game` is the client folder that contains `Interface\AddOns`. After installing, `/reload` in game; the first install (or any change to the `.toc` or `Bindings.xml`) needs a full game restart. There is no automated way to run or test the addon — verification happens in game.
 
-If you add a new source file, list it in both `LootBlacklist.toc` and the `$files` array in `Install.ps1`.
+If you add a new source file, list it in `LootBlacklist.toc`, the file list in `Install.ps1`, and `SHIPPED` in `.github/workflows/release.yml`. PR checks fail if one is missing.
+
+## Versions and releases
+
+Same model as the AHPrice addon:
+- **Never pick, type, or bump a version number.** `LootBlacklist.toc` stays `## Version: @project-version@`; PR checks fail otherwise. The version is the newest `vMAJOR.MINOR.PATCH` git tag, and only `.github/workflows/release.yml` creates tags.
+- Every push to `main` diffs the shipped files (`SHIPPED` in `release.yml`) against the last tag. If any changed, it releases last tag + 1 patch: builds `LootBlacklist-vX.Y.Z.zip` with the version stamped into the TOC, creates the GitHub release (which creates the tag), then uploads to CurseForge when the `CURSEFORGE_API_TOKEN`, `CURSEFORGE_PROJECT_ID`, and `CURSEFORGE_GAME_VERSIONS` secrets are set. Docs or CI-only changes do not release.
+- For a minor or major bump, **start** the commit subject or PR title with `[minor]` or `[major]` (or add a `Release: minor` line). Running **Release** manually with `bump` forces one.
+- Release notes (GitHub and CurseForge) are the commit subjects and merged PR titles since the last tag, so write PR titles as player-facing notes.
+- Ship through a pull request into `main`; don't push `main` directly. PR checks: Lua 5.1 syntax, `Bindings.xml` well-formed, version placeholder, shipped file lists in sync.
 
 ## Architecture
 
