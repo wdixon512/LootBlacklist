@@ -29,13 +29,14 @@ Same model as the AHPrice addon:
 
 ## Architecture
 
-**Core trick: the addon takes over auto loot.** The game's native Auto Loot grabs everything before addon code runs, so while the addon is enabled it forces the `autoLootDefault` CVar to `0` and does auto looting itself in `OnLootReady` (on `LOOT_READY`), calling `LootSlot` on every non-blacklisted slot. The player's real auto-loot preference is stored in `db.autoLoot` and restored by `ApplyAutoLootMode()` when the addon is disabled (`/lbl off`). Things that keep this consistent:
-- `OnCVarUpdate` catches the player re-enabling Auto Loot in game options, records it in `db.autoLoot`, and flips the CVar back off. The `settingCVar` flag stops the addon from reacting to its own CVar writes.
-- `PLAYER_ENTERING_WORLD` re-applies the mode because the game can restore the saved CVar on login.
+**Core trick: the addon replaces the game's auto loot.** The game's native Auto Loot grabs everything before addon code runs, so while the addon is enabled it forces the `autoLootDefault` CVar to `0` and auto loots itself, and it must feel the same as the native one (the owner treats auto loot as critical):
+- A loot `session` starts on the first of `LOOT_READY` / `LOOT_OPENED` (clients send one or both). `LootPass` calls `LootSlot` once per non-blacklisted slot, re-runs on `LOOT_SLOT_CLEARED` and a short `C_Timer` retry (the loot list can arrive late), and calls `CloseLoot()` when only blacklisted items (or nothing) remain.
+- The loot frame is faded with `SetAlpha(0)` while auto looting, never `Hide()` (hiding it closes the loot). `HandToPlayer` shows it again when something can't be taken: retries exhausted (full bags, rolls) or `LOOT_BIND_CONFIRM`.
 - The `AUTOLOOTTOGGLE` modified click (Shift) inverts auto loot for one corpse, mimicking native behavior.
-- `CloseIfOnlyBlocked` (on `LOOT_SLOT_CLEARED`) closes the loot window once only blacklisted items remain; `lootHandled`/`autoLooting` are reset on `LOOT_CLOSED`.
+- The player's real choice is `db.autoLoot` (per character) and `account.autoLoot` (account wide, the default for new characters, since the CVar is already off by then); set both through `SetAutoLootChoice`. It is written back to the CVar by `/lbl off` and on `PLAYER_LOGOUT`, so an uninstalled addon never leaves Auto Loot off.
+- `OnCVarUpdate` catches the player re-enabling Auto Loot in game options, records it, and flips the CVar back off. The `settingCVar` flag stops the addon from reacting to its own CVar writes. `PLAYER_ENTERING_WORLD` re-applies the mode because the game restores the saved CVar on login.
 
-**Saved data:** `LootBlacklistCharDB` (per character, declared in the `.toc`) holds `items` (itemID → cached name string, `""` if unknown), `enabled`, `autoLoot`, `announce`. Defaults are filled in on `ADDON_LOADED`. Item names are re-cached opportunistically in `Refresh` and on `GET_ITEM_INFO_RECEIVED`.
+**Saved data:** `LootBlacklistCharDB` (per character) holds `items` (itemID → cached name string, `""` if unknown), `enabled`, `autoLoot`, `announce`, `autoLootFixed` (one-time migration flag). `LootBlacklistDB` (account wide) holds `autoLoot`. Both are declared in the `.toc`; defaults are filled in on `ADDON_LOADED`. Item names are re-cached opportunistically in `Refresh` and on `GET_ITEM_INFO_RECEIVED`.
 
 **Ctrl+Shift+right-click detection:** `Bindings.xml` registers a `LOOTBLACKLIST` `ModifiedClick` so bag/loot buttons treat the click as modified and don't use or loot the item. `HookClicks` uses `hooksecurefunc` on `HandleModifiedItemClick` plus `ContainerFrameItemButtonMixin.OnClick` as a backup; since both can fire for one click, `OnItemClick` debounces (0.3s). It shows a `MenuUtil` context menu when available, otherwise toggles directly. The same hooks on `ChatEdit_InsertLink` / `ChatFrameUtil.InsertLink` redirect Shift-clicked links into the manager's Add box when it has focus.
 

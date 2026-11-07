@@ -14,7 +14,9 @@ Each character has its own list and settings.
 
 ## How it skips items
 
-The game's own Auto Loot takes everything before an addon can step in. So while Loot Blacklist is on, it turns the game's Auto Loot setting off and auto loots everything else itself, leaving blacklisted items on the corpse. Holding Shift still flips auto loot for one corpse. `/lbl off` gives the game its Auto Loot setting back. If you uninstall the addon, turn Auto Loot back on in the game options.
+The game's own Auto Loot takes everything before an addon can step in. So while Loot Blacklist is on, it turns the game's Auto Loot setting off and does the auto looting itself: the loot window stays out of sight, everything else is taken, and the window closes, leaving blacklisted items on the corpse. Holding Shift still flips auto loot for one corpse. If something can't be taken (full bags, a roll, a bind-on-pickup prompt), the loot window shows, just like the game's Auto Loot.
+
+Your Auto Loot choice is given back to the game at every logout and by `/lbl off`, so removing the addon never leaves Auto Loot off. New characters start with the same choice.
 
 When you loot by hand, you can still click a blacklisted item to take it.
 

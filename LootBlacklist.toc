@@ -4,6 +4,7 @@
 ## Notes: Never pick up the items you blacklist. Ctrl+Shift+right-click an item to add or remove it. /lbl opens the list.
 ## Author: wdixon512
 ## Version: @project-version@
+## SavedVariables: LootBlacklistDB
 ## SavedVariablesPerCharacter: LootBlacklistCharDB
 ## Category: Inventory
 ## DefaultState: enabled
