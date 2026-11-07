@@ -3,7 +3,10 @@
 -- The game's own auto loot takes everything before an addon can step in, so
 -- while this addon is enabled it turns the game's Auto Loot setting off and
 -- auto loots everything else itself. Your auto loot choice is kept in
--- LootBlacklistCharDB.autoLoot (per character) and put back when you disable the addon.
+-- LootBlacklistCharDB.autoLoot (per character) and given back to the game when
+-- you disable the addon and at every logout, so the saved game setting stays yours.
+-- LootBlacklistDB.autoLoot (account wide) is the choice a new character starts with,
+-- because by then the game setting has already been turned off.
 
 local ADDON = ...
 local PREFIX = "|cff33ff99Loot Blacklist|r: "
@@ -11,6 +14,7 @@ local ROWS = 11
 local ROW_HEIGHT = 26
 
 local db
+local account
 local frame -- manager window, built on first open
 
 local function Print(msg)
@@ -97,6 +101,12 @@ local function SetAutoLootCVar(on)
     settingCVar = false
 end
 
+-- The player's auto loot choice, for this character and as the default for new ones.
+local function SetAutoLootChoice(on)
+    db.autoLoot = on and true or false
+    account.autoLoot = db.autoLoot
+end
+
 local function ApplyAutoLootMode()
     if db.enabled then
         if GetAutoLootCVar() then
@@ -117,7 +127,7 @@ local function OnCVarUpdate(name, value)
     if tostring(value) == "1" then
         -- The player ticked Auto Loot in the game options: keep auto looting,
         -- but through this addon so blacklisted items stay on the corpse.
-        db.autoLoot = true
+        SetAutoLootChoice(true)
         SetAutoLootCVar(false)
         Print("auto loot stays on, and blacklisted items are skipped.")
         if frame and frame:IsShown() then
@@ -126,8 +136,16 @@ local function OnCVarUpdate(name, value)
     end
 end
 
-local lootHandled = false
-local autoLooting = false
+-- The addon's own auto loot. Like the game's, it keeps the loot window out of
+-- sight, takes everything it can, and closes the window when done. Anything it
+-- cannot take (full bags, a roll, a bind-on-pickup prompt) brings the window
+-- back, as the game does.
+
+local RETRY_DELAY = 0.1
+local MAX_PASSES = 10
+
+local session -- the open loot window while the addon auto loots it, else nil
+local lootFrameHidden = false
 
 local function SlotItemID(slot)
     if LootSlotHasItem and not LootSlotHasItem(slot) then
@@ -136,66 +154,113 @@ local function SlotItemID(slot)
     return ItemInstant(GetLootSlotLink(slot))
 end
 
-local function SlotHasItem(slot)
-    if LootSlotHasItem then
-        return LootSlotHasItem(slot)
-    end
-    return GetLootSlotLink(slot) ~= nil
-end
-
--- Close the window once only blacklisted items are left on it.
-local function CloseIfOnlyBlocked()
-    if not autoLooting then
+local function HideLootFrame(hide)
+    local lf = LootFrame
+    if not lf or not lf.SetAlpha then
         return
     end
-    local any = false
-    for slot = 1, GetNumLootItems() do
-        local texture = GetLootSlotInfo(slot)
-        if texture then
-            local id = SlotItemID(slot)
-            if not IsBlocked(id) then
-                return
+    -- Fade instead of Hide: hiding the loot frame closes the loot.
+    if hide and not lootFrameHidden then
+        lootFrameHidden = true
+        lf:SetAlpha(0)
+    elseif not hide and lootFrameHidden then
+        lootFrameHidden = false
+        lf:SetAlpha(1)
+    end
+end
+
+-- Stop auto looting this window and let the player see it.
+local function HandToPlayer()
+    if session then
+        session.auto = false
+    end
+    HideLootFrame(false)
+end
+
+local LootPass
+
+local function ScheduleLootPass(s)
+    if C_Timer and C_Timer.After then
+        C_Timer.After(RETRY_DELAY, function()
+            if session == s then
+                LootPass()
             end
-            any = true
-        end
-    end
-    if any then
-        CloseLoot()
+        end)
     end
 end
 
-local function OnLootReady()
-    if lootHandled or not db.enabled then
+LootPass = function()
+    local s = session
+    if not s or not s.auto then
         return
     end
-    lootHandled = true
-    autoLooting = false
-
-    local auto = db.autoLoot
-    if IsModifiedClick and IsModifiedClick("AUTOLOOTTOGGLE") then
-        auto = not auto
-    end
-    if not auto then
-        return -- manual looting: the player picks what to take
-    end
-
-    autoLooting = true
-    local skipped = {}
+    local left = false -- items the addon still wants to take
     for slot = GetNumLootItems(), 1, -1 do
         local texture, _, _, _, _, locked = GetLootSlotInfo(slot)
         if texture then
+            s.sawLoot = true
             local id = SlotItemID(slot)
             if IsBlocked(id) then
-                skipped[#skipped + 1] = GetLootSlotLink(slot) or Describe(id)
-            elseif not locked then
-                LootSlot(slot)
+                if not s.noted[slot] then
+                    s.noted[slot] = true
+                    s.skipped[#s.skipped + 1] = GetLootSlotLink(slot) or Describe(id)
+                end
+            else
+                left = true
+                -- Ask for each slot once, so a bind-on-pickup prompt shows only once.
+                if not locked and not s.asked[slot] then
+                    s.asked[slot] = true
+                    LootSlot(slot)
+                end
             end
         end
     end
-    if db.announce and #skipped > 0 then
-        Print("left behind " .. table.concat(skipped, ", "))
+
+    if not s.sawLoot then
+        -- The loot list can arrive a moment after the event.
+        s.passes = s.passes + 1
+        if s.passes <= MAX_PASSES then
+            ScheduleLootPass(s)
+        end
+        return
     end
-    CloseIfOnlyBlocked()
+    if not s.announced and db.announce and #s.skipped > 0 and not left then
+        s.announced = true
+        Print("left behind " .. table.concat(s.skipped, ", "))
+    end
+    if not left then
+        CloseLoot()
+        return
+    end
+    s.passes = s.passes + 1
+    if s.passes > MAX_PASSES then
+        HandToPlayer() -- full bags, a roll in progress, or a prompt waiting on the player
+        return
+    end
+    ScheduleLootPass(s)
+end
+
+-- Runs on LOOT_READY and LOOT_OPENED; clients send one or both.
+local function OnLootOpened()
+    if not db.enabled then
+        return
+    end
+    if not session then
+        local auto = db.autoLoot
+        if IsModifiedClick and IsModifiedClick("AUTOLOOTTOGGLE") then
+            auto = not auto
+        end
+        session = { auto = auto, passes = 0, asked = {}, noted = {}, skipped = {} }
+        if auto then
+            HideLootFrame(true)
+        end
+    end
+    LootPass()
+end
+
+local function OnLootClosed()
+    session = nil
+    HideLootFrame(false)
 end
 
 ---------------------------------------------------------------------------
@@ -328,7 +393,7 @@ local function BuildFrame()
     f.enabled:SetPoint("TOPLEFT", 12, -30)
 
     f.auto = MakeCheck(f, "Auto loot everything else", "Loot all other items as soon as the loot window opens. Hold Shift to do the opposite for one corpse, like the game's Auto Loot.", function(on)
-        db.autoLoot = on
+        SetAutoLootChoice(on)
     end)
     f.auto:SetPoint("TOPLEFT", f.enabled, "BOTTOMLEFT", 0, 2)
 
@@ -716,8 +781,25 @@ events:SetScript("OnEvent", function(self, event, ...)
         if db.announce == nil then
             db.announce = true
         end
+        LootBlacklistDB = type(LootBlacklistDB) == "table" and LootBlacklistDB or {}
+        account = LootBlacklistDB
         if db.autoLoot == nil then
-            db.autoLoot = GetAutoLootCVar() and true or false
+            -- A new character: the game setting is already off if another
+            -- character runs this addon, so use the account-wide choice.
+            if account.autoLoot ~= nil then
+                db.autoLoot = account.autoLoot
+            else
+                db.autoLoot = GetAutoLootCVar() and true or false
+            end
+        elseif db.autoLoot == false and not db.autoLootFixed then
+            -- Older versions gave each new character the game setting after
+            -- another character had turned it off, so they wrongly started on
+            -- manual looting. Turn auto loot back on once for them.
+            db.autoLoot = true
+        end
+        db.autoLootFixed = true
+        if account.autoLoot == nil then
+            account.autoLoot = db.autoLoot
         end
         -- Each step on its own, so one failure does not stop the rest.
         for _, step in ipairs({ ApplyAutoLootMode, HookClicks, HookTooltip }) do
@@ -727,23 +809,32 @@ events:SetScript("OnEvent", function(self, event, ...)
             end
         end
         self:RegisterEvent("LOOT_READY")
+        self:RegisterEvent("LOOT_OPENED")
         self:RegisterEvent("LOOT_SLOT_CLEARED")
+        self:RegisterEvent("LOOT_BIND_CONFIRM")
         self:RegisterEvent("LOOT_CLOSED")
         self:RegisterEvent("CVAR_UPDATE")
         self:RegisterEvent("GET_ITEM_INFO_RECEIVED")
         self:RegisterEvent("PLAYER_ENTERING_WORLD")
-    elseif event == "LOOT_READY" then
-        OnLootReady()
+        self:RegisterEvent("PLAYER_LOGOUT")
+    elseif event == "LOOT_READY" or event == "LOOT_OPENED" then
+        OnLootOpened()
     elseif event == "LOOT_SLOT_CLEARED" then
-        CloseIfOnlyBlocked()
+        LootPass()
+    elseif event == "LOOT_BIND_CONFIRM" then
+        -- A bind-on-pickup prompt needs the player; show the window with it.
+        HandToPlayer()
     elseif event == "LOOT_CLOSED" then
-        lootHandled = false
-        autoLooting = false
+        OnLootClosed()
     elseif event == "CVAR_UPDATE" then
         OnCVarUpdate(...)
     elseif event == "PLAYER_ENTERING_WORLD" then
         -- The game can restore its saved CVar on login; take it back over.
         ApplyAutoLootMode()
+    elseif event == "PLAYER_LOGOUT" then
+        -- Save the player's own choice, so the game setting is right even if
+        -- the addon is removed before the next login.
+        SetAutoLootCVar(db.autoLoot)
     elseif event == "GET_ITEM_INFO_RECEIVED" then
         local id = ...
         if IsBlocked(id) and frame and frame:IsShown() then
