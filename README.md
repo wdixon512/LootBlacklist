@@ -5,6 +5,7 @@ A World of Warcraft addon that never picks up the items you blacklist.
 ## Use
 
 - **Ctrl+Shift+right-click** an item in your bags, the loot window, or a chat link, then choose **Add to blacklist** or **Remove from blacklist**.
+- With **ahprice** installed, Ctrl+Shift+right-click (or ahprice's Shift+right-click) opens one shared menu with a **Never loot** box next to ahprice's options.
 - **`/lbl`** (or `/lootblacklist`) opens the list. Add items by ID, name, or Shift-clicked link, or drag an item onto the window. Remove with the X or by right-clicking a row.
 - Blacklisted items show "Loot Blacklist: never looted" on their tooltip.
 - Key Bindings → **Loot Blacklist** has optional keys to add/remove the item under the mouse and to open the list.
