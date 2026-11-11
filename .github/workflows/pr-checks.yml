@@ -20,8 +20,20 @@ jobs:
       - name: Lua syntax (WoW runs Lua 5.1)
         if: ${{ !cancelled() }}
         run: |
-          sudo apt-get install -y -qq lua5.1 >/dev/null
-          for f in *.lua; do luac5.1 -p "$f" && echo "ok $f"; done
+          set -euo pipefail
+          # The Ubuntu mirror sometimes fails to resolve; retry before failing the PR.
+          for attempt in 1 2 3; do
+            if timeout 180 sudo apt-get update -qq && timeout 180 sudo apt-get install -y -qq lua5.1 >/dev/null; then
+              break
+            fi
+            if [ "$attempt" = 3 ]; then echo "apt-get lua5.1 failed after 3 tries"; exit 1; fi
+            echo "apt-get attempt $attempt failed; retrying in 15s"; sleep 15
+          done
+          # Check every file; a syntax error in any of them fails the step.
+          for f in *.lua; do
+            luac5.1 -p "$f"
+            echo "ok $f"
+          done
 
       - name: Bindings.xml is well-formed
         if: ${{ !cancelled() }}

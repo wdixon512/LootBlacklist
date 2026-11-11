@@ -26,6 +26,8 @@ Same model as the AHPrice addon:
 - For a minor or major bump, **start** the commit subject or PR title with `[minor]` or `[major]` (or add a `Release: minor` line). Running **Release** manually with `bump` forces one.
 - Release notes (GitHub and CurseForge) are the commit subjects and merged PR titles since the last tag, so write PR titles as player-facing notes.
 - Ship through a pull request into `main`; don't push `main` directly. PR checks: Lua 5.1 syntax, `Bindings.xml` well-formed, version placeholder, shipped file lists in sync.
+- Every PR links a GitHub issue in this repo: open one first (`gh issue create`, label `bug` or `enhancement`), put `Closes #N` in the PR body, and confirm the PR's Development box shows it (`gh pr view <n> --json closingIssuesReferences`). Write bodies to a UTF-8 file and pass `--body-file`; piping them through a Windows shell garbles `→` and emoji.
+- Read the PR's checks (`gh pr checks <n>`) before calling it done.
 
 ## Architecture
 
@@ -40,7 +42,7 @@ Same model as the AHPrice addon:
 
 **Ctrl+Shift+right-click detection:** `Bindings.xml` registers a `LOOTBLACKLIST` `ModifiedClick` so bag/loot buttons treat the click as modified and don't use or loot the item. `HookClicks` uses `hooksecurefunc` on `HandleModifiedItemClick` plus `ContainerFrameItemButtonMixin.OnClick` as a backup; since both can fire for one click, `OnItemClick` debounces (0.3s). It shows a `MenuUtil` context menu when available, otherwise toggles directly. The same hooks on `ChatEdit_InsertLink` / `ChatFrameUtil.InsertLink` redirect Shift-clicked links into the manager's Add box when it has focus.
 
-**Global entry points** (referenced from `Bindings.xml` / `.toc`, so they must stay global with these names): `LootBlacklist_OnAddonCompartmentClick`, `LootBlacklist_ToggleHovered`, and the `BINDING_HEADER_*` / `BINDING_NAME_*` strings.
+**Global entry points** (referenced from `Bindings.xml` / `.toc`, so they must stay global with these names): `LootBlacklist_OnAddonCompartmentClick`, `LootBlacklist_ToggleHovered`, and the `BINDING_HEADER_*` / `BINDING_NAME_*` strings. `LootBlacklistAPI` (`IsBlocked`, `Toggle`, `Open`, `SetMenuHost`) is read by ahprice: when ahprice registers a menu host, `OnItemClick` opens ahprice's shared item menu (with a Never loot box) instead of ours.
 
 **Manager window** (`BuildFrame`) is built lazily on first open, with a fixed pool of `ROWS` row buttons scrolled via `f.offset`. Any code that changes `db` should call `frame:Refresh()` when `frame` exists and is shown — follow the existing pattern.
 

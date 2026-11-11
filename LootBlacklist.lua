@@ -598,6 +598,29 @@ function LootBlacklist_OnAddonCompartmentClick()
     ShowUI(true)
 end
 
+-- For other add-ons (ahprice). A menu host shows one shared item menu with a
+-- Never loot box, so our Ctrl+Shift+right-click opens that menu instead of ours.
+local menuHost = nil
+LootBlacklistAPI = {
+    version = 1,
+    IsBlocked = function(id)
+        return IsBlocked(tonumber(id))
+    end,
+    Toggle = function(id)
+        id = tonumber(id)
+        if id then
+            Toggle(id)
+        end
+    end,
+    Open = function()
+        ShowUI(false)
+    end,
+    -- fn(itemID) opens the host's menu; nil removes the host.
+    SetMenuHost = function(fn)
+        menuHost = type(fn) == "function" and fn or nil
+    end,
+}
+
 ---------------------------------------------------------------------------
 -- Ctrl+Shift+right-click on any item
 ---------------------------------------------------------------------------
@@ -614,6 +637,10 @@ local function OnItemClick(id)
         return
     end
     lastClickID, lastClickTime = id, now
+
+    if menuHost and pcall(menuHost, id) then
+        return
+    end
 
     if MenuUtil and MenuUtil.CreateContextMenu then
         local blocked = IsBlocked(id)
