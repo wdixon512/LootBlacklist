@@ -26,6 +26,8 @@ Same model as the AHPrice addon:
 - For a minor or major bump, **start** the commit subject or PR title with `[minor]` or `[major]` (or add a `Release: minor` line). Running **Release** manually with `bump` forces one.
 - Release notes (GitHub and CurseForge) are the commit subjects and merged PR titles since the last tag, so write PR titles as player-facing notes.
 - Ship through a pull request into `main`; don't push `main` directly. PR checks: Lua 5.1 syntax, `Bindings.xml` well-formed, version placeholder, shipped file lists in sync.
+- Every PR links a GitHub issue in this repo: open one first (`gh issue create`, label `bug` or `enhancement`), put `Closes #N` in the PR body, and confirm the PR's Development box shows it (`gh pr view <n> --json closingIssuesReferences`). Write bodies to a UTF-8 file and pass `--body-file`; piping them through a Windows shell garbles `→` and emoji.
+- Read the PR's checks (`gh pr checks <n>`) before calling it done.
 
 ## Architecture
 
